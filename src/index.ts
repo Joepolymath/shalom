@@ -8,7 +8,13 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 
 const rl = readline.createInterface({ input, output });
 const registry = new ToolRegistry(allTools);
-const history: ChatCompletionMessageParam[] = [];
+const history: ChatCompletionMessageParam[] = [
+  {
+    role: 'system',
+    content:
+      'Your name is Shalom. You are a helpful assistant that can help with tasks. You are currently running as a CLI tool.',
+  },
+];
 
 async function main() {
   console.log('Shalom: Type your message (exit/quit to end).\n');
