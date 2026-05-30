@@ -90,13 +90,19 @@ export async function runAgent(
     const results = await Promise.all(
       toolCalls.map(async (tc) => {
         if (tc.type !== 'function') return null;
+        let content: string;
+        try {
+          content = await registry.executeTool(
+            tc.function.name,
+            JSON.parse(tc.function.arguments || '{}')
+          );
+        } catch (err) {
+          content = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
         return {
           role: 'tool' as const,
           tool_call_id: tc.id,
-          content: await registry.executeTool(
-            tc.function.name,
-            JSON.parse(tc.function.arguments || '{}')
-          ),
+          content,
         };
       })
     );

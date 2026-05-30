@@ -26,18 +26,36 @@ const allowedUsers: Set<number> | null = TELEGRAM_ALLOWED_USERS
   : null;
 
 const sessions = new Map<number, ChatCompletionMessageParam[]>();
+const chatQueues = new Map<number, Promise<void>>();
+
+function enqueue(chatId: number, task: () => Promise<void>): void {
+  const prev = chatQueues.get(chatId) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  chatQueues.set(chatId, next);
+  void next.finally(() => {
+    if (chatQueues.get(chatId) === next) {
+      chatQueues.delete(chatId);
+    }
+  });
+}
+
+const BASE_SYSTEM_PROMPT =
+  "Your name is Shalom. You are a helpful assistant that can help with tasks. You are currently running as a Telegram bot on the user's Mac. You can manage the macOS Reminders, Notes, and Calendar apps (list, read, create, complete, and delete items) and send/read Messages. Use these tools when the user asks about their reminders, notes, calendar events, or messages. When a tool needs a date or time, always resolve relative expressions like \"today\", \"tomorrow\", or \"in 2 hours\" against the current date and time given below, and pass an ISO 8601 value.";
+
+function systemMessage(): ChatCompletionMessageParam {
+  return {
+    role: 'system',
+    content: `${BASE_SYSTEM_PROMPT}\n\nThe current date and time is ${new Date().toString()}.`,
+  };
+}
 
 function getHistory(chatId: number): ChatCompletionMessageParam[] {
   if (!sessions.has(chatId)) {
-    sessions.set(chatId, [
-      {
-        role: 'system',
-        content:
-          'Your name is Shalom. You are a helpful assistant that can help with tasks. You are currently running as a Telegram bot.',
-      },
-    ]);
+    sessions.set(chatId, [systemMessage()]);
   }
-  return sessions.get(chatId)!;
+  const history = sessions.get(chatId)!;
+  history[0] = systemMessage();
+  return history;
 }
 
 function splitMessage(text: string, maxLen = 4096): string[] {
@@ -65,20 +83,24 @@ bot.command('reset', (ctx) => {
   return ctx.reply('Conversation reset.');
 });
 
-bot.on('message:text', async (ctx) => {
-  const history = getHistory(ctx.chat.id);
+bot.on('message:text', (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text;
 
-  try {
-    const result = await runAgent(ctx.message.text, history, registry);
-    const text = result || '(no response)';
-    for (const part of splitMessage(text)) {
-      await ctx.reply(part);
+  enqueue(chatId, async () => {
+    const history = getHistory(chatId);
+    try {
+      const result = await runAgent(text, history, registry);
+      const reply = result || '(no response)';
+      for (const part of splitMessage(reply)) {
+        await ctx.reply(part);
+      }
+    } catch (err) {
+      await ctx.reply(
+        `Error: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
-  } catch (err) {
-    await ctx.reply(
-      `Error: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+  });
 });
 
 const app = express();
